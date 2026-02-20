@@ -102,14 +102,37 @@ export class TxtAdapter {
 
 ### 2. ContentLayer 架构
 
-图文分层存储：
+图文分层存储 + 段落索引：
 
 ```typescript
 interface ContentLayer {
-  paragraphs: string[];     // 段落数组
-  startGlobalIndex: number; // 段落索引
-  image?: string;           // 可选图片
+  paragraphs: string[];  // 段落数组，每个元素是一个段落
+  startIndex: number;    // 该 Layer 第一段在章节中的全局绝对索引
+  image?: string;        // 可选图片（Blob URL），占用独立索引位
 }
+```
+
+**索引计数规则**：
+- 每个段落占用 1 个索引位
+- 图片（如果存在）占用 1 个独立索引位
+- `startIndex` 记录该 Layer 第一段的全局绝对索引
+
+**示例**：
+```typescript
+// Layer 1: 3段文字 + 1张图片
+{
+  paragraphs: ['段1', '段2', '段3'],
+  startIndex: 0,
+  image: 'blob:...'
+}
+// 段1: index=0, 段2: index=1, 段3: index=2, 图片: index=3
+
+// Layer 2: 2段文字
+{
+  paragraphs: ['段4', '段5'],
+  startIndex: 4
+}
+// 段4: index=4, 段5: index=5
 ```
 
 ### 3. 缓存管理
@@ -188,7 +211,7 @@ export interface Bookmark {
   id?: number;
   bookId: number;
   chapterId: number;
-  paragraphIndex: number;  // 利用 startGlobalIndex
+  globalIndex: number;  // 利用 startIndex 定位段落
   note?: string;
   createTime: number;
 }
@@ -226,30 +249,53 @@ export function useBookmarks() {
 
 ### 添加笔记功能
 
-利用 `startGlobalIndex` 定位段落：
+利用 `startIndex` 精确定位段落：
 
 ```typescript
 interface Note {
   id?: number;
   bookId: number;
   chapterId: number;
-  paragraphIndex: number;  // 全局段落索引
+  globalIndex: number;  // 段落的全局索引
   content: string;
   createTime: number;
 }
 
-// 定位笔记
+// 定位笔记到具体段落
 function locateNote(note: Note, layers: ContentLayer[]) {
   for (const layer of layers) {
-    const start = layer.startGlobalIndex;
+    const start = layer.startIndex;
     const end = start + layer.paragraphs.length;
     
-    if (note.paragraphIndex >= start && note.paragraphIndex < end) {
-      const localIndex = note.paragraphIndex - start;
-      return layer.paragraphs[localIndex];
+    if (note.globalIndex >= start && note.globalIndex < end) {
+      const localIndex = note.globalIndex - start;
+      return {
+        layer,
+        paragraph: layer.paragraphs[localIndex],
+        localIndex
+      };
     }
   }
+  return null;
 }
+
+// 添加笔记时获取全局索引
+function addNoteAtParagraph(
+  chapterId: number,
+  layerIndex: number,
+  paragraphOffset: number,
+  layers: ContentLayer[]
+) {
+  const layer = layers[layerIndex];
+  const globalIndex = layer.startIndex + paragraphOffset;
+  
+  return {
+    chapterId,
+    globalIndex,
+    content: '...'
+  };
+}
+```
 ```
 
 ## 调试技巧

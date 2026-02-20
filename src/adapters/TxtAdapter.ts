@@ -202,12 +202,16 @@ export class TxtAdapter {
   /**
    * Chunk paragraphs into multiple ContentLayers
    * Prevents DOM performance issues with extremely long content
+   * 
+   * 索引计数规则：
+   * - 每个段落占用 1 个索引位
+   * - startIndex 记录该 Layer 第一段的全局索引
    */
   static chunkParagraphs(paragraphs: string[]): ContentLayer[] {
     const layers: ContentLayer[] = [];
     let currentChunk: string[] = [];
     let currentChunkSize = 0;
-    let startGlobalIndex = 0;
+    let startIndex = 0;
 
     for (const para of paragraphs) {
       // Check if adding this paragraph would exceed the limit
@@ -215,11 +219,11 @@ export class TxtAdapter {
         // Create a layer with current chunk
         layers.push({
           paragraphs: [...currentChunk],
-          startGlobalIndex
+          startIndex
         });
         
         // Start new chunk
-        startGlobalIndex += currentChunk.length;
+        startIndex += currentChunk.length;
         currentChunk = [];
         currentChunkSize = 0;
       }
@@ -232,7 +236,7 @@ export class TxtAdapter {
     if (currentChunk.length > 0) {
       layers.push({
         paragraphs: [...currentChunk],
-        startGlobalIndex
+        startIndex
       });
     }
 

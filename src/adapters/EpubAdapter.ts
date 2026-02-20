@@ -174,7 +174,7 @@ export class EpubAdapter {
         // 返回空的 layer 而不是抛出错误
         return [{
           paragraphs: [`章节 "${chapter.title}" 内容不存在或无法加载`],
-          startGlobalIndex: 0
+          startIndex: 0
         }];
       }
 
@@ -186,7 +186,7 @@ export class EpubAdapter {
         console.warn('[EpubAdapter] 章节文档为空');
         return [{
           paragraphs: [`章节 "${chapter.title}" 内容为空`],
-          startGlobalIndex: 0
+          startIndex: 0
         }];
       }
 
@@ -209,7 +209,7 @@ export class EpubAdapter {
           `章节 "${chapter.title}" 加载失败`,
           `错误信息: ${error instanceof Error ? error.message : String(error)}`
         ],
-        startGlobalIndex: 0
+        startIndex: 0
       }];
     }
   }
@@ -231,14 +231,14 @@ export class EpubAdapter {
     // 当前累积的段落数组
     let currentParagraphs: string[] = [];
     // 章节级段落计数器
-    let chapterParaCounter = 0;
+    let globalIndex = 0;
 
     // 递归遍历 DOM 树
-    await this.traverseDOM(body, layers, currentParagraphs, epubBook, section, chapterParaCounter);
+    globalIndex = await this.traverseDOM(body, layers, currentParagraphs, epubBook, section, globalIndex);
 
     // 处理最后剩余的段落
     if (currentParagraphs.length > 0) {
-      this.addParagraphsWithChunking(layers, currentParagraphs, chapterParaCounter);
+      this.addParagraphsWithChunking(layers, currentParagraphs, globalIndex);
     }
 
     return layers;
@@ -247,11 +247,16 @@ export class EpubAdapter {
   /**
    * Add paragraphs to layers with automatic chunking
    * Splits large paragraph arrays into multiple layers to prevent DOM performance issues
+   * 
+   * 索引计数规则：
+   * - 每个段落占用 1 个索引位
+   * - 图片（如果存在）占用 1 个独立索引位
+   * - 返回下一个可用的全局索引
    */
   private static addParagraphsWithChunking(
     layers: ContentLayer[],
     paragraphs: string[],
-    startGlobalIndex: number,
+    startIndex: number,
     image?: string
   ): number {
     // Calculate total character count
@@ -261,16 +266,17 @@ export class EpubAdapter {
       // Within limit, add as single layer
       layers.push({ 
         paragraphs: [...paragraphs], 
-        startGlobalIndex,
+        startIndex,
         image 
       });
-      return startGlobalIndex + paragraphs.length;
+      // 返回下一个索引：段落数 + 图片（如果有）
+      return startIndex + paragraphs.length + (image ? 1 : 0);
     }
 
     // Need to chunk - split paragraphs into multiple layers
     let currentChunk: string[] = [];
     let currentChunkSize = 0;
-    let currentStartIndex = startGlobalIndex;
+    let currentStartIndex = startIndex;
     let isFirstChunk = true;
 
     for (const para of paragraphs) {
@@ -278,11 +284,12 @@ export class EpubAdapter {
         // Current chunk is full, create a layer
         layers.push({
           paragraphs: [...currentChunk],
-          startGlobalIndex: currentStartIndex,
+          startIndex: currentStartIndex,
           image: isFirstChunk ? image : undefined
         });
         
-        currentStartIndex += currentChunk.length;
+        // 更新索引：段落数 + 图片（如果是第一块且有图片）
+        currentStartIndex += currentChunk.length + (isFirstChunk && image ? 1 : 0);
         currentChunk = [];
         currentChunkSize = 0;
         isFirstChunk = false;
@@ -296,10 +303,10 @@ export class EpubAdapter {
     if (currentChunk.length > 0) {
       layers.push({
         paragraphs: [...currentChunk],
-        startGlobalIndex: currentStartIndex,
+        startIndex: currentStartIndex,
         image: isFirstChunk ? image : undefined
       });
-      currentStartIndex += currentChunk.length;
+      currentStartIndex += currentChunk.length + (isFirstChunk && image ? 1 : 0);
     }
 
     return currentStartIndex;
@@ -308,6 +315,11 @@ export class EpubAdapter {
   /**
    * 递归遍历 DOM 节点
    * 核心：遇到图片时截断文本，生成新 layer
+   * 
+   * 索引计数规则：
+   * - 每个段落占用 1 个索引位
+   * - 图片占用 1 个独立索引位
+   * - globalIndex 记录当前的全局索引位置
    */
   private static async traverseDOM(
     element: Element,
@@ -315,7 +327,7 @@ export class EpubAdapter {
     currentParagraphs: string[],
     epubBook: Book,
     section: any,
-    chapterParaCounter: number
+    globalIndex: number
   ): Promise<number> {
     for (const child of Array.from(element.children)) {
       const tagName = child.tagName.toLowerCase();
@@ -340,103 +352,84 @@ export class EpubAdapter {
         console.log('[EpubAdapter] 发现图片标签，src:', src);
         
         if (src) {
-          let internalPath = '';  // 在 try 外部声明
+          let internalPath = '';
           try {
             console.log('[EpubAdapter] 开始处理图片:', src);
-            console.log('[EpubAdapter] 当前章节路径 section.href:', section.href);
-            console.log('[EpubAdapter] 当前章节完整路径 section.canonical:', section.canonical);
             
-            // 【关键修正】：手动解析相对路径
-            
-            // 使用 canonical 路径（完整路径）而不是 href
+            // 手动解析相对路径
             const basePath = section.canonical || section.href;
             
             if (src.startsWith('http://') || src.startsWith('https://')) {
-              // 绝对 URL，直接使用
               throw new Error('External images not supported');
             } else if (src.startsWith('/')) {
-              // 绝对路径（相对于 EPUB 根目录）
-              internalPath = src; // 保留开头的斜杠
+              internalPath = src;
             } else {
-              // 相对路径，需要基于当前章节路径解析
               const sectionDir = basePath.substring(0, basePath.lastIndexOf('/'));
-              console.log('[EpubAdapter] 章节目录:', sectionDir);
-              
-              // 手动解析相对路径
-              const parts = sectionDir.split('/').filter(p => p); // 过滤空字符串
+              const parts = sectionDir.split('/').filter(p => p);
               const srcParts = src.split('/');
               
               for (const part of srcParts) {
                 if (part === '..') {
-                  parts.pop(); // 返回上一级
+                  parts.pop();
                 } else if (part !== '.' && part !== '') {
                   parts.push(part);
                 }
               }
               
-              internalPath = '/' + parts.join('/'); // 添加开头的斜杠以匹配 archive
+              internalPath = '/' + parts.join('/');
             }
             
             console.log('[EpubAdapter] 修正后的内部路径:', internalPath);
             
-            // 使用 archive.request 方法加载图片，指定为 blob 类型
             const imageData = await epubBook.archive.request(internalPath, 'blob');
             
-            // 确保返回的是 Blob 类型
             if (!(imageData instanceof Blob)) {
               throw new Error('Image data is not a Blob');
             }
             
             const imageBlob = imageData as Blob;
-            console.log('[EpubAdapter] 图片 Blob:', {
-              size: imageBlob.size,
-              type: imageBlob.type
-            });
-            
             const blobUrl = URL.createObjectURL(imageBlob);
             console.log('[EpubAdapter] Blob URL 创建成功:', blobUrl);
 
-            // 截断：将当前累积的段落生成一个或多个 layer（应用分块）
+            // 截断：将当前累积的段落生成 layer，图片附加到最后一个 layer
             if (currentParagraphs.length > 0) {
-              chapterParaCounter = this.addParagraphsWithChunking(
+              globalIndex = this.addParagraphsWithChunking(
                 layers, 
                 currentParagraphs, 
-                chapterParaCounter,
+                globalIndex,
                 blobUrl
               );
-              currentParagraphs.length = 0;  // 清空累积
-              console.log('[EpubAdapter] 图片附加到段落 layer');
+              currentParagraphs.length = 0;
+              console.log('[EpubAdapter] 图片附加到段落 layer，下一个索引:', globalIndex);
             } else {
               // 如果没有段落，创建只有图片的 layer
               layers.push({
                 paragraphs: [],
-                startGlobalIndex: chapterParaCounter,
+                startIndex: globalIndex,
                 image: blobUrl
               });
-              console.log('[EpubAdapter] 创建纯图片 layer');
+              globalIndex += 1; // 图片占用 1 个索引位
+              console.log('[EpubAdapter] 创建纯图片 layer，下一个索引:', globalIndex);
             }
             
-            console.log('[EpubAdapter] 图片 layer 已添加，当前 layers 总数:', layers.length);
           } catch (error) {
             console.error('[EpubAdapter] 图片加载失败:', {
               src,
-              internalPath: internalPath,
+              internalPath,
               error: error instanceof Error ? error.message : String(error)
             });
           }
-        } else {
-          console.warn('[EpubAdapter] 图片标签没有 src 属性');
         }
       }
       // 递归处理其他容器元素
       else if (child.children.length > 0) {
-        chapterParaCounter = await this.traverseDOM(
+        globalIndex = await this.traverseDOM(
           child, 
           layers, 
           currentParagraphs, 
           epubBook, 
           section, 
-          chapterParaCounter
+          globalIndex
         );
       }
       // 处理纯文本节点
@@ -448,6 +441,6 @@ export class EpubAdapter {
       }
     }
     
-    return chapterParaCounter;
+    return globalIndex;
   }
 }

@@ -11,25 +11,50 @@
 
 ### ContentLayer 架构
 
-**核心思想**：图文分层存储 + 段落数组
+**核心思想**：图文分层存储 + 段落索引
 
 ```typescript
 interface ContentLayer {
-  paragraphs: string[];     // 段落数组
-  startGlobalIndex: number; // 段落起始索引（用于评论定位）
-  image?: string;           // 可选图片（Blob URL）
+  paragraphs: string[];  // 段落数组，每个元素是一个段落
+  startIndex: number;    // 该 Layer 第一段在章节中的全局绝对索引
+  image?: string;        // 可选图片（Blob URL），紧随段落之后
 }
 ```
 
+**索引计数规则**：
+- 每个段落占用 1 个索引位
+- 图片（如果存在）占用 1 个独立索引位
+- `startIndex` 记录该 Layer 第一段的全局绝对索引
+
+**示例**：
+```typescript
+// Layer 1: 3段文字 + 1张图片
+{
+  paragraphs: ['段1', '段2', '段3'],
+  startIndex: 0,
+  image: 'blob:...'
+}
+// 段1: index=0, 段2: index=1, 段3: index=2, 图片: index=3
+
+// Layer 2: 2段文字
+{
+  paragraphs: ['段4', '段5'],
+  startIndex: 4
+}
+// 段4: index=4, 段5: index=5
+```
+
 **设计原则**：
-1. **图片截断**：遇到图片时结束当前 layer，生成新 layer
-2. **段落存储**：文本按段落分割存储，支持段落级评论
+1. **图片截断**：遇到图片时结束当前 layer，图片附加到该 layer
+2. **段落存储**：文本按段落分割存储，支持段落级精确定位
 3. **自动分块**：超长文本自动切片（15000字/块），防止 DOM 性能问题
+4. **索引连续性**：全局索引在整个章节中连续递增
 
 **性能优势**：
 - 对象数量减少 90%+（相比原子节点架构）
 - 内存占用降低 80%+
 - 支持数百万字文本流畅阅读
+- 为段落级评论功能预留精确定位能力
 
 ## 架构层次
 
@@ -88,11 +113,16 @@ interface UnifiedChapter {
 
 ```typescript
 interface ContentLayer {
-  paragraphs: string[];     // 段落数组
-  startGlobalIndex: number; // 段落起始索引
-  image?: string;           // 可选图片
+  paragraphs: string[];  // 段落数组，每个元素是一个段落
+  startIndex: number;    // 该 Layer 第一段在章节中的全局绝对索引
+  image?: string;        // 可选图片（Blob URL），占用独立索引位
 }
 ```
+
+**索引定位**：
+- 通过 `layer.startIndex + paragraphOffset` 可精确定位任何段落
+- 通过 `layer.startIndex + layer.paragraphs.length` 可定位图片
+- 为未来的段落级评论功能提供基础
 
 ## 核心组件
 
@@ -103,6 +133,7 @@ interface ContentLayer {
 - 章节切分（正则匹配）
 - 懒加载章节内容
 - 按段落分割文本
+- 维护全局索引计数（每段落 +1）
 
 #### EpubAdapter
 - 使用 Epub.js 解析
@@ -110,6 +141,8 @@ interface ContentLayer {
 - 懒加载章节内容
 - 解析 XHTML 为 ContentLayer
 - 图片转 Blob URL
+- 维护全局索引计数（段落 +1，图片 +1）
+- 递归遍历 DOM 树，正确处理嵌套结构
 
 ### 2. 缓存管理器 (ChapterCache)
 
@@ -286,9 +319,19 @@ src/
 
 ### 添加新功能
 
-- 书签：扩展 Progress 表
-- 笔记：利用 `startGlobalIndex` 定位段落
-- 搜索：遍历 layers 的 paragraphs
+- **书签**：扩展 Progress 表，存储多个位置
+- **段落评论**：利用 `layer.startIndex + paragraphOffset` 精确定位段落
+  ```typescript
+  interface Comment {
+    bookId: number;
+    chapterId: number;
+    globalIndex: number;  // 段落的全局索引
+    content: string;
+    createTime: number;
+  }
+  ```
+- **搜索**：遍历 layers 的 paragraphs，返回匹配的 globalIndex
+- **高亮**：基于 globalIndex 定位段落，应用样式
 
 ## 总结
 

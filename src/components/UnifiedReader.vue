@@ -269,14 +269,21 @@ async function loadAllChapters() {
     for (let i = 0; i < totalChapters; i++) {
       const chapter = chapters.value[i];
       
-      // 加载章节
-      await readerStore.loadChapter(i);
+      // 直接加载章节内容，不更新 store 的 currentLayers
+      let layers: ContentLayer[];
+      if (activeBook.value.format === 'txt') {
+        const { TxtAdapter } = await import('@/adapters/TxtAdapter');
+        layers = await TxtAdapter.loadChapter(activeBook.value, i);
+      } else {
+        const { EpubAdapter } = await import('@/adapters/EpubAdapter');
+        layers = await EpubAdapter.loadChapter(activeBook.value, i);
+      }
       
-      // 添加到列表
+      // 添加到本地列表
       allChapters.value.push({
         chapterId: i,
         title: chapter.title,
-        layers: [...readerStore.currentLayers]
+        layers: layers
       });
 
       // 更新进度
@@ -287,6 +294,12 @@ async function loadAllChapters() {
     
     // 先关闭加载状态，让内容显示出来
     initialLoading.value = false;
+    
+    // 初始化 store 的当前章节为第一章
+    if (allChapters.value.length > 0) {
+      readerStore.currentChapterId = 0;
+      readerStore.currentLayers = allChapters.value[0].layers;
+    }
     
     // 等待 DOM 渲染
     await nextTick();
@@ -336,6 +349,13 @@ function updateVisibleChapter() {
 
   if (visibleChapterId !== currentVisibleChapterId.value) {
     currentVisibleChapterId.value = visibleChapterId;
+    
+    // 同步更新 store 的 currentChapterId 和 currentLayers
+    readerStore.currentChapterId = visibleChapterId;
+    const chapterData = allChapters.value.find(c => c.chapterId === visibleChapterId);
+    if (chapterData) {
+      readerStore.currentLayers = chapterData.layers;
+    }
   }
 }
 
@@ -488,6 +508,14 @@ async function restoreProgress() {
     // 更新当前章节
     currentVisibleChapterId.value = progress.chapterIndex;
     console.log('[UnifiedReader] 📑 当前章节设置为:', progress.chapterIndex, '-', progress.chapterTitle);
+    
+    // 同步更新 store 的状态
+    readerStore.currentChapterId = progress.chapterIndex;
+    const chapterData = allChapters.value.find(c => c.chapterId === progress.chapterIndex);
+    if (chapterData) {
+      readerStore.currentLayers = chapterData.layers;
+      console.log('[UnifiedReader] 📝 已同步更新 store 的 currentLayers');
+    }
     
     progressRestored.value = true;
     console.log('[UnifiedReader] ✅ 进度恢复完成！');
