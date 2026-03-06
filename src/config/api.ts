@@ -1,0 +1,1 @@
+export const GATEWAY_BASE = 'http://localhost:8081';
