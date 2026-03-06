@@ -36,6 +36,14 @@
             <span class="coming-soon">即将上线</span>
           </button>
         </nav>
+        <div class="user-section">
+          <template v-if="auth.user">
+            <el-avatar :src="auth.user.avatar" size="40" />
+            <span class="user-nickname">{{ auth.user.nickname }}</span>
+            <el-button class="auth-btn" @click="onLogout"><span>退出</span></el-button>
+          </template>
+          <el-button v-else class="auth-btn" @click="router.push('/auth')"><span>登录/注册</span></el-button>
+        </div>
       </div>
     </header>
 
@@ -166,7 +174,9 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUnifiedLibrary } from '@/composables/useUnifiedLibrary';
 import { useProgress } from '@/composables/useProgress';
+import { useAuthStore } from '@/store/auth';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { logout } from '@/api/auth';
 import { 
   Upload, 
   Delete, 
@@ -180,6 +190,21 @@ import {
 const { books, loading, importing, importProgress, loadBooks, importBook, deleteBook } = useUnifiedLibrary();
 const { getProgressPercentage, getProgressChapterTitle } = useProgress();
 const router = useRouter();
+const auth = useAuthStore();
+
+async function onLogout(): Promise<void> {
+  try {
+    const token = auth.user?.token || localStorage.getItem('auth_token') || '';
+    if (token) {
+      await logout(token);
+    }
+    auth.clear();
+    ElMessage.success('已退出');
+  } catch (error) {
+    auth.clear();
+    ElMessage.success('已退出');
+  }
+}
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const progressMap = ref<Map<number, number>>(new Map());
@@ -521,6 +546,38 @@ onUnmounted(() => {
 .nav-tabs {
   display: flex;
   gap: 8px;
+}
+
+.user-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-nickname {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.auth-btn {
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
+}
+.auth-btn:hover {
+  filter: brightness(1.05);
+}
+
+.logout-btn {
+  color: #667eea;
+  font-weight: 600;
+}
+.logout-btn:hover {
+  color: #764ba2;
 }
 
 .nav-tab {

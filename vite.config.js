@@ -19,8 +19,9 @@ export default defineConfig({
     proxy: {
       // 以后碰到 /api 开头的请求，就悄悄转交给后端妈妈
       '/api': {
-        target: 'http://localhost:9000', // 网关的地址
-        changeOrigin: true
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
   },
