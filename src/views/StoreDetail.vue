@@ -19,9 +19,9 @@
           <div class="actions">
             <el-button type="primary" class="brand-btn" @click="readNow">立即阅读</el-button>
             <el-button class="brand-btn" @click="openReviewDialog">写书评</el-button>
-            <el-button class="brand-btn" @click="collect">收藏到书架</el-button>
+            <el-button class="brand-btn" :disabled="collected || collecting" @click="collect">{{ collected ? '已收藏' : '收藏到书架' }}</el-button>
             <el-button class="danger-btn" @click="submitDelete">删除书籍</el-button>
-            <el-button class="brand-btn" @click="goBack">返回书城</el-button>
+            <el-button class="brand-btn" @click="goBack">{{ backText }}</el-button>
           </div>
         </div>
       </div>
@@ -80,14 +80,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { getBookInfoBase, deleteBookApi, addBookReview, listBookReviews } from '@/api/book';
+import { getBookInfoBase, deleteBookApi, addBookReview, listBookReviews, addToShelf, getBookshelf } from '@/api/book';
+import { useAuthStore } from '@/store/auth';
 import { db } from '@/db';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
+
+const fromShelf = computed(() => String(route.query.from || '') === 'shelf');
+const backText = computed(() => (fromShelf.value ? '返回书架' : '返回书城'));
+
+const collected = ref(false);
+const collecting = ref(false);
 
 const id = computed(() => Number(route.params.id || 0));
 const detail = ref<any | null>(null);
@@ -172,6 +180,25 @@ async function submitReview() {
   }
 }
 
+async function checkCollected() {
+  const uid = auth.user?.id ? Number(auth.user.id) : 0;
+  const bid = bookId.value;
+  if (!uid || !bid) {
+    collected.value = false;
+    return;
+  }
+  try {
+    const res = await getBookshelf(uid);
+    if (res.data?.code !== 200 || !Array.isArray(res.data.data)) {
+      collected.value = false;
+      return;
+    }
+    collected.value = res.data.data.some((b: any) => Number(b?.id) === bid);
+  } catch {
+    collected.value = false;
+  }
+}
+
 onMounted(async () => {
   try {
     const local = await db.serverBooks.get(id.value);
@@ -185,13 +212,17 @@ onMounted(async () => {
     }
   } catch {}
 
-
   await loadReviews(1);
+  await checkCollected();
+});
+
+watch([bookId, () => auth.user?.id], () => {
+  checkCollected();
 });
 
 function goBack() {
   router.push('/');
-  localStorage.setItem('bookshelf_default_tab', 'store');
+  localStorage.setItem('bookshelf_default_tab', fromShelf.value ? 'library' : 'store');
 }
 
 function readNow() {
@@ -202,8 +233,33 @@ function readNow() {
   router.push(`/online/${bookId.value}`);
 }
 
-function collect() {
-  ElMessage.info('已记录收藏意图，待提供下载/拉取接口后加入“我的藏书”。');
+async function collect() {
+  if (!bookId.value) {
+    ElMessage.error('书籍不存在');
+    return;
+  }
+  if (collected.value || collecting.value) {
+    return;
+  }
+  collecting.value = true;
+  try {
+    const res = await addToShelf(bookId.value);
+    if (res.data?.code !== 200) {
+      const msg = res.data?.msg || '加入书架失败';
+      if (String(msg).includes('已在书架') || String(msg).includes('已收藏')) {
+        collected.value = true;
+        return;
+      }
+      ElMessage.error(msg);
+      return;
+    }
+    collected.value = true;
+    ElMessage.success('已加入书架');
+  } catch (e: any) {
+    ElMessage.error(e?.message ? String(e.message) : '加入书架失败');
+  } finally {
+    collecting.value = false;
+  }
 }
 
 async function submitDelete() {

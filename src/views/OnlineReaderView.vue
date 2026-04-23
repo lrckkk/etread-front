@@ -42,7 +42,7 @@
 
         <div class="content">
           <div class="content-title">{{ currentTitle }}</div>
-          <div class="content-body" :style="readerStyles" v-html="currentHtml" @click="onContentClick"></div>
+          <div ref="contentRef" class="content-body" :style="readerStyles" v-html="currentHtml" @click="onContentClick" @scroll="onScroll"></div>
         </div>
       </div>
 
@@ -96,13 +96,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { db, type ServerBook, type ServerChapter } from '@/db';
 import { fetchChapterCatalog, fetchChapterContents } from '@/api/chapter';
 import { getBookInfoBase } from '@/api/book';
 import { queryChapterComments, publishParagraphComment, likeComment, unlikeComment, type ParagraphComment } from '@/api/comment';
+import { useProgress } from '@/composables/useProgress';
 
 const route = useRoute();
 const router = useRouter();
@@ -130,6 +131,59 @@ const currentTitle = computed(() => {
   const c = chapters.value.find(x => x.chapterId === currentChapterId.value);
   return c?.chapterTitle || '';
 });
+
+const { loadProgress, saveProgress } = useProgress();
+const contentRef = ref<HTMLDivElement | null>(null);
+let saveProgressTimer: number | null = null;
+
+const currentChapterIndex = computed(() => {
+  if (!currentChapterId.value) return 0;
+  const idx = chapters.value.findIndex((c) => c.chapterId === currentChapterId.value);
+  return idx >= 0 ? idx : 0;
+});
+
+function onScroll() {
+  if (saveProgressTimer) {
+    window.clearTimeout(saveProgressTimer);
+  }
+  saveProgressTimer = window.setTimeout(() => {
+    saveOnlineProgress();
+  }, 1000);
+}
+
+async function saveOnlineProgress() {
+  if (!bookId.value || !contentRef.value) return;
+  if (!currentChapterId.value) return;
+  try {
+    const scrollTop = contentRef.value.scrollTop;
+    const title = currentTitle.value || `第 ${currentChapterIndex.value + 1} 章`;
+    await saveProgress(bookId.value, currentChapterIndex.value, scrollTop, title);
+  } catch {}
+}
+
+async function restoreOnlineProgress() {
+  if (!bookId.value) return false;
+  try {
+    const p = await loadProgress(bookId.value);
+    if (!p) return false;
+
+    const idx = typeof p.chapterIndex === 'number' ? p.chapterIndex : 0;
+    const target = chapters.value[Math.min(Math.max(idx, 0), Math.max(chapters.value.length - 1, 0))];
+    if (!target) return false;
+
+    await openChapter(target.chapterId, false);
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 50));
+
+    if (contentRef.value && typeof p.position === 'number') {
+      contentRef.value.scrollTop = p.position;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function sanitizeHtml(raw: string): string {
   try {
@@ -285,7 +339,7 @@ async function fetchAndCacheContents(chapterIds: number[], timeMap: Map<number, 
   }
 }
 
-async function openChapter(chapterId: number) {
+async function openChapter(chapterId: number, resetScroll = true) {
   currentChapterId.value = chapterId;
   selectedParagraphId.value = '';
   commentText.value = '';
@@ -297,6 +351,8 @@ async function openChapter(chapterId: number) {
   const cached = await db.serverChapterContents.get(chapterId);
   if (cached?.content && (!remoteTime || cached.updateTime === remoteTime)) {
     currentHtml.value = sanitizeHtml(cached.content);
+    await nextTick();
+    if (resetScroll && contentRef.value) contentRef.value.scrollTop = 0;
     return;
   }
 
@@ -313,6 +369,8 @@ async function openChapter(chapterId: number) {
           updateTime: remoteTime
         });
         currentHtml.value = sanitizeHtml(item.content);
+        await nextTick();
+        if (resetScroll && contentRef.value) contentRef.value.scrollTop = 0;
       }
     }
   } catch {
@@ -431,10 +489,22 @@ onMounted(async () => {
   }
   await loadBookMeta();
   await syncCatalog();
-  if (chapters.value.length) await openChapter(chapters.value[0].chapterId);
+
+  const restored = await restoreOnlineProgress();
+  if (!restored && chapters.value.length) {
+    await openChapter(chapters.value[0].chapterId, false);
+  }
 });
 
 onUnmounted(() => {
+  try {
+    if (saveProgressTimer) {
+      window.clearTimeout(saveProgressTimer);
+      saveProgressTimer = null;
+    }
+    saveOnlineProgress();
+  } catch {}
+
   try {
     document.documentElement.style.overflow = prevHtmlOverflow;
     document.body.style.overflow = prevBodyOverflow;
