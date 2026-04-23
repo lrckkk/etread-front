@@ -66,6 +66,22 @@ export function getBookInfoBase(bookId: number) {
     return httpBook.get(`/book/info/${bookId}`);
 }
 
+export function addToShelf(bookId: number) {
+    const fd = new FormData();
+    fd.append('bookId', String(bookId));
+    return httpBook.post('/book/shelf/add', fd);
+}
+
+export function removeFromShelf(bookId: number) {
+    const fd = new FormData();
+    fd.append('bookId', String(bookId));
+    return httpBook.post('/book/shelf/remove', fd);
+}
+
+export function getBookshelf(userId: number) {
+    return httpBook.get(`/book/bookshelf/${userId}`);
+}
+
 export function searchBooks(
     dto: {
         id?: number;

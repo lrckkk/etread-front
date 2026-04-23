@@ -150,6 +150,43 @@
             </div>
           </div>
         </div>
+
+        <div class="cloud-shelf" v-if="!loading">
+          <div class="section-header">
+            <h2>云端书架</h2>
+            <div class="cloud-actions">
+              <el-button class="auth-btn" :disabled="!auth.user" :loading="cloudShelfLoading" @click="loadCloudShelf">刷新</el-button>
+            </div>
+          </div>
+
+          <div v-if="!auth.user" class="empty-state">
+            <el-icon><Reading /></el-icon>
+            <h3>未登录</h3>
+            <p>登录后可查看加入书架的线上书籍</p>
+          </div>
+
+          <div v-else class="store-grid" v-loading="cloudShelfLoading">
+            <div v-for="item of cloudShelfVisibleItems" :key="item.serverBookId" class="store-item" @click="openStoreDetail(item.serverBookId, 'library')">
+              <div class="store-cover">
+                <img v-if="item.coverUrl" :src="item.coverUrl" :alt="item.title" />
+                <div v-else class="default-cover">
+                  <span class="cover-letter">{{ item.title[0]?.toUpperCase() || '?' }}</span>
+                </div>
+              </div>
+              <div class="store-meta">
+                <div class="title" :title="item.title">{{ item.title }}</div>
+                <div class="author" :title="item.author || '佚名'">{{ item.author || '佚名' }}</div>
+              </div>
+              <el-button class="danger-mini" @click.stop="removeCloudBook(item.serverBookId)">移除</el-button>
+            </div>
+
+            <div v-if="cloudShelfVisibleItems.length === 0 && !cloudShelfLoading" class="empty-state">
+              <el-icon><Reading /></el-icon>
+              <h3>暂无书籍</h3>
+              <p>在书城详情页点击“收藏到书架”即可加入</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 书城视图：搜索 + 列表 -->
@@ -224,7 +261,7 @@ import {
   VideoPlay,
   Search
 } from '@element-plus/icons-vue';
-import { searchBooks } from '@/api/book';
+import { searchBooks, getBookshelf, removeFromShelf } from '@/api/book';
 import { db, type ServerBook } from '@/db';
 import StoreUpload from '@/views/StoreUpload.vue';
 
@@ -240,6 +277,10 @@ const storePageSize = 10;
 const storeHasNext = ref(false);
 const ratingOptions = Array.from({ length: 11 }, (_, i) => i * 0.5);
 
+const cloudShelfLoading = ref(false);
+const cloudShelfBooks = ref<ServerBook[]>([]);
+const cloudShelfVisibleItems = computed(() => cloudShelfBooks.value.filter(b => (b.status ?? 1) === 1));
+
 const storeSearch = ref<{
   title: string;
   author: string;
@@ -254,8 +295,11 @@ const storeSearch = ref<{
   tagsStr: ''
 });
 
-function openStoreDetail(id: number) {
-  router.push(`/store/detail/${id}`);
+function openStoreDetail(id: number, from: 'store' | 'library' = 'store') {
+  router.push({
+    path: `/store/detail/${id}`,
+    query: from === 'library' ? { from: 'shelf' } : {}
+  });
 }
 
 async function loadMyBooks() {
@@ -363,6 +407,55 @@ function onUploadDone() {
   runStoreSearch(1);
 }
 
+async function loadCloudShelf() {
+  const uid = auth.user?.id ? Number(auth.user.id) : 0;
+  if (!uid) {
+    cloudShelfBooks.value = [];
+    return;
+  }
+  cloudShelfLoading.value = true;
+  try {
+    const res = await getBookshelf(uid);
+    if (res.data?.code !== 200 || !Array.isArray(res.data.data)) {
+      cloudShelfBooks.value = [];
+      return;
+    }
+    const list = res.data.data;
+    cloudShelfBooks.value = list.map((b: any) => {
+      const addTime = b.createTime ? Date.parse(b.createTime) : Date.now();
+      return {
+        serverBookId: Number(b.id),
+        title: b.title,
+        author: b.author,
+        coverUrl: b.coverUrl || b.cover_url || undefined,
+        description: b.description || undefined,
+        tags: b.tags || undefined,
+        publisher: b.publisher || undefined,
+        status: typeof b.status === 'number' ? b.status : undefined,
+        addTime: Number.isFinite(addTime) ? addTime : Date.now()
+      };
+    }).filter((x: ServerBook) => Number.isFinite(x.serverBookId) && x.serverBookId > 0);
+  } catch {
+    cloudShelfBooks.value = [];
+  } finally {
+    cloudShelfLoading.value = false;
+  }
+}
+
+async function removeCloudBook(bookId: number) {
+  try {
+    const res = await removeFromShelf(bookId);
+    if (res.data?.code !== 200) {
+      ElMessage.error(res.data?.msg || '移除失败');
+      return;
+    }
+    ElMessage.success('已移除');
+    await loadCloudShelf();
+  } catch (e: any) {
+    ElMessage.error(e?.message ? String(e.message) : '移除失败');
+  }
+}
+
 async function onLogout(): Promise<void> {
   try {
     const token = auth.user?.token || localStorage.getItem('auth_token') || '';
@@ -388,7 +481,19 @@ watch(activeTab, (v) => {
   if (v === 'store') {
     runStoreSearch(1);
   }
+  if (v === 'library') {
+    loadCloudShelf();
+  }
 });
+
+watch(
+  () => auth.user?.id,
+  () => {
+    if (activeTab.value === 'library') {
+      loadCloudShelf();
+    }
+  }
+);
 
 
 /**
@@ -658,6 +763,7 @@ onMounted(async () => {
       localStorage.removeItem('bookshelf_default_tab');
     }
     if (activeTab.value === 'store') await loadMyBooks();
+    if (activeTab.value === 'library') await loadCloudShelf();
   } catch (error) {
     console.error('Failed to initialize bookshelf:', error);
     ElMessage.error('Failed to load bookshelf. Please refresh the page.');
@@ -801,6 +907,25 @@ onUnmounted(() => {
 .store-meta .title { font-weight: 700; color: #303133; }
 .store-meta .author { font-size: 12px; color: #909399; }
 .store-item { cursor: pointer; }
+
+.cloud-shelf {
+  margin-top: 18px;
+}
+
+.danger-mini {
+  margin-top: 10px;
+  width: 100%;
+  border-radius: 12px;
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f56c6c 0%, #f08c8c 100%);
+  box-shadow: 0 8px 18px rgba(245,108,108,.25);
+}
+
+.danger-mini:hover {
+  filter: brightness(1.05);
+}
 
 .store-pagination {
   margin-top: 14px;
