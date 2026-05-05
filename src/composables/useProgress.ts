@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { db, type Progress } from '@/db';
 import { ElMessage } from 'element-plus';
+import { syncProgress, getMyProgress } from '@/api/progress';
 
 /**
  * Composable for managing reading progress tracking
@@ -61,33 +62,74 @@ export function useProgress() {
       };
 
       if (existing) {
-        // Update existing progress record
         await db.progress.update(existing.id!, progressData);
       } else {
-        // Create new progress record
         await db.progress.add({
           bookId,
           ...progressData
         });
       }
-      
-      // Update current progress ref
+
       currentProgress.value = {
         bookId,
         ...progressData
       };
+
+      // 云端同步 - 尝试从本地书籍表或服务端书籍表获取 serverBookId
+      let serverBookId: number | undefined;
+
+      // 先尝试从本地书籍表获取
+      const localBook = await db.books.get(bookId);
+      console.log('[useProgress] 检查本地书籍, bookId:', bookId, 'localBook:', localBook);
+      if (localBook?.serverBookId) {
+        serverBookId = localBook.serverBookId;
+        console.log('[useProgress] 从本地书籍找到 serverBookId:', serverBookId);
+      } else {
+        // 尝试从服务端书籍表获取
+        const serverBook = await db.serverBooks.get(bookId);
+        console.log('[useProgress] 检查服务端书籍, bookId:', bookId, 'serverBook:', serverBook);
+        if (serverBook) {
+          serverBookId = serverBook.serverBookId;
+          console.log('[useProgress] 从服务端书籍找到 serverBookId:', serverBookId);
+        }
+      }
+
+      if (serverBookId) {
+        try {
+          // 获取章节总数来计算百分比
+          let totalChapters = 100; // 默认值
+          const serverBook = await db.serverBooks.get(bookId);
+          if (serverBook) {
+            const chapters = await db.serverChapters.where('serverBookId').equals(serverBookId).toArray();
+            if (chapters.length > 0) {
+              totalChapters = chapters.length;
+            }
+          }
+          const readPercentage = (chapterIndex + 1) / totalChapters;
+          console.log('[useProgress] 开始同步, serverBookId:', serverBookId, 'chapter:', chapterIndex, 'total:', totalChapters, 'percentage:', readPercentage);
+          await syncProgress({
+            bookId: serverBookId,
+            currentChapterId: chapterIndex,
+            readPercentage
+          });
+          console.log('[useProgress] 云端进度已同步成功');
+        } catch (e) {
+          console.error('[useProgress] 云端同步失败:', e);
+        }
+      } else {
+        console.log('[useProgress] 未找到 serverBookId，跳过云端同步, bookId:', bookId);
+      }
     } catch (error: any) {
       console.error('Failed to save progress:', error);
-      
-      // Check for storage quota exceeded error
-      if (error?.name === 'QuotaExceededError' || 
+
+      if (error?.name === 'QuotaExceededError' ||
           error?.message?.includes('quota') ||
           error?.message?.includes('storage')) {
         ElMessage.error('Storage quota exceeded. Unable to save reading progress.');
       } else {
         ElMessage.error('Failed to save reading progress. Your position may not be saved.');
       }
-      
+
       throw error;
     }
   }

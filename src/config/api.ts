@@ -1,1 +1,1 @@
-export const GATEWAY_BASE = 'http://localhost:8081';
+export const GATEWAY_BASE = 'http://localhost:8722/api';

@@ -2,7 +2,7 @@ import axios from 'axios';
 import { GATEWAY_BASE } from '@/config/api';
 
 const httpComment = axios.create({
-    baseURL: import.meta.env.DEV ? '/comment-api' : GATEWAY_BASE
+    baseURL: import.meta.env.DEV ? '/api' : GATEWAY_BASE
 });
 
 httpComment.interceptors.request.use((config) => {

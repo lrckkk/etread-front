@@ -2,7 +2,7 @@ import axios from 'axios';
 import { GATEWAY_BASE } from '@/config/api';
 
 const httpBook = axios.create({
-    baseURL: import.meta.env.DEV ? '/book-api' : GATEWAY_BASE
+    baseURL: import.meta.env.DEV ? '/api' : GATEWAY_BASE
 });
 
 httpBook.interceptors.request.use((config) => {
