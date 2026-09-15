@@ -546,28 +546,35 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   transition: background-color 0.3s ease;
+  background: #fafafa;
 }
 
 .toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 2% 5%;
-  background: rgba(0, 0, 0, 0.05);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  padding: 16px 5%;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
   flex-shrink: 0;
   z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.toolbar .el-button {
+  border-radius: 8px !important;
 }
 
 .chapter-info {
   flex: 1;
   text-align: center;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 15px;
+  color: var(--text-primary);
 }
 
 .current-chapter {
-  max-width: 50%;
+  max-width: 60%;
   display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -577,7 +584,7 @@ onUnmounted(() => {
 .toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 2%;
+  gap: 12px;
 }
 
 /* 目录侧边栏 */
@@ -585,11 +592,11 @@ onUnmounted(() => {
   position: fixed;
   top: 0;
   right: 0;
-  width: 300px;
+  width: 320px;
   height: 100%;
-  background: white;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
-  z-index: 1000;
+  background: #ffffff;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+  z-index: 100;
   display: flex;
   flex-direction: column;
 }
@@ -629,7 +636,7 @@ onUnmounted(() => {
 }
 
 .toc-item.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #8b7355 0%, #6b5640 100%);
   color: white;
 }
 
